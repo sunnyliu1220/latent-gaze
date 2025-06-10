@@ -402,17 +402,79 @@ def run_EM(x, y, z_hat, model, q_z_prior, sigma=2.0, y_var=131.6, batch_size=256
     
     return posteriors, log_lkhds, log_p_z_hat_given_z_list, model, all_elbos
 
-
-
-
-
-
-
-
-
-
-
-
+def batch_E_step(indices, dataset, model, z_hat, q_z_prior, sigma=2.0, y_var=131.6, device='cpu'):
+    """
+    Run E-step for multiple dataset indices and store results for plotting.
+    
+    Parameters:
+    indices (list or array): List of dataset indices to process
+    dataset (torch.utils.data.Dataset): The dataset to sample from
+    model (torch.nn.Module): The trained model
+    z_hat (torch.Tensor): Observed eye trace location, shape [2]
+    q_z_prior (torch.Tensor): Prior distribution over z, shape (H, W)
+    sigma (float): Standard deviation for Gaussian likelihood p(z_hat | z)
+    y_var (float): Variance for the neural activity likelihood
+    device (str or torch.device): Device to run computations on
+    
+    Returns:
+    posteriors (torch.Tensor): Tensor of posterior distributions, shape (len(indices), H, W)
+    log_lkhds (torch.Tensor): Tensor of log likelihoods, shape (len(indices), H*W)
+    log_p_z_hat_given_z_list (torch.Tensor): Tensor of log p(z_hat | z), shape (len(indices), H*W)
+    """
+    
+    # Convert inputs to appropriate types
+    if not isinstance(indices, (list, tuple)):
+        indices = [indices]
+    
+    z_hat = z_hat.to(device).float()
+    
+    # Convert prior to tensor if it's numpy array
+    if isinstance(q_z_prior, np.ndarray):
+        q_z_tensor = torch.tensor(q_z_prior, dtype=torch.float32, device=device)
+    else:
+        q_z_tensor = q_z_prior.to(device).float()
+    
+    H, W = q_z_tensor.shape
+    
+    # Initialize storage tensors
+    posteriors = torch.zeros((len(indices), H, W), device=device)
+    log_lkhds = torch.zeros((len(indices), H * W), device=device)
+    log_p_z_hat_given_z_list = torch.zeros((len(indices), H * W), device=device)
+    
+    print(f"Running batch E-step for {len(indices)} samples...")
+    
+    # Process each index
+    for i, idx in enumerate(indices):
+        print(f"Processing sample {i+1}/{len(indices)} (dataset index {idx})")
+        
+        # Get data from dataset
+        data = dataset[idx]
+        x = data[0]  # stimulus: (T, H, W)
+        y = data[1]  # response: (N,)
+        
+        # Move to device and ensure float32
+        x = x.to(device).float()
+        y = y.to(device).float()
+        
+        # Run E-step for this sample
+        q_z, log_lkhd_full, log_p_z_hat_given_z_full = E_step(
+            x, y, z_hat, model, q_z_tensor, 
+            sigma=sigma, y_var=y_var, device=device
+        )
+        
+        # Store results
+        posteriors[i] = q_z
+        log_lkhds[i] = log_lkhd_full
+        log_p_z_hat_given_z_list[i] = log_p_z_hat_given_z_full
+        
+        # Print some statistics
+        print(f"  Posterior sum: {q_z.sum().item():.6f}, max: {q_z.max().item():.6f}")
+        
+        # Use current posterior as prior for next iteration (optional)
+        # q_z_tensor = q_z.clone()
+    
+    print("Batch E-step completed!")
+    return posteriors, log_lkhds, log_p_z_hat_given_z_list
 
 # Plotting code
 
